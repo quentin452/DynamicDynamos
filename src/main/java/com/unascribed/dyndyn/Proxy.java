@@ -25,45 +25,47 @@ public abstract class Proxy {
 		FMLCommonHandler.instance().bus().register(this);
 		MinecraftForge.EVENT_BUS.register(this);
 	}
-	
+
 	private Map<TileDynamoBase, Integer> lastTickRate = new WeakIdentityHashMap<TileDynamoBase, Integer>();
 	private List<Runnable> doLater = Lists.newArrayList();
-	
+
 	@SubscribeEvent
 	public void onTick(ServerTickEvent e) {
 		if (e.phase == Phase.END) {
-			Iterator<Runnable> itr = doLater.iterator();
-			while (itr.hasNext()) {
-				Runnable r = itr.next();
-				r.run();
-				itr.remove();
-			}
+			// Process Runnable tasks
+			doLater.forEach(Runnable::run);
+			doLater.clear(); // Clear the list in one step
+
 			for (WorldServer w : DimensionManager.getWorlds()) {
-				for (TileEntity te : (List<TileEntity>)w.loadedTileEntityList) {
+				// Iterate through all loaded tile entities
+				for (TileEntity te : (List<TileEntity>) w.loadedTileEntityList) {
 					if (te instanceof TileDynamoBase) {
-						TileDynamoBase tdb = (TileDynamoBase)te;
-						if (lastTickRate.containsKey(te)) {
-							if (lastTickRate.get(te).intValue() != tdb.getInfoEnergyPerTick()) {
-								UpdateDynamoEnergyRate.Message msg = new UpdateDynamoEnergyRate.Message();
-								msg.x = tdb.xCoord;
-								msg.y = tdb.yCoord;
-								msg.z = tdb.zCoord;
-								msg.energyPerTick = tdb.getInfoEnergyPerTick();
-								Chunk c = w.getChunkFromBlockCoords(te.xCoord, te.zCoord);
-								for (EntityPlayerMP ep : (List<EntityPlayerMP>)w.playerEntities) {
-									if (w.getPlayerManager().isPlayerWatchingChunk(ep, c.xPosition, c.zPosition)) {
-										DynamicDynamos.inst.network.sendTo(msg, ep);
-									}
-								}
-							}
+						TileDynamoBase tdb = (TileDynamoBase) te;
+						Integer lastRate = lastTickRate.get(tdb);
+
+						if (lastRate == null || lastRate != tdb.getInfoEnergyPerTick()) {
+							UpdateDynamoEnergyRate.Message msg = new UpdateDynamoEnergyRate.Message();
+							msg.x = tdb.xCoord;
+							msg.y = tdb.yCoord;
+							msg.z = tdb.zCoord;
+							msg.energyPerTick = tdb.getInfoEnergyPerTick();
+
+							Chunk c = w.getChunkFromBlockCoords(te.xCoord, te.zCoord);
+
+							// Use stream to filter and send the message to players watching the chunk
+							w.playerEntities.stream()
+									.filter(ep -> w.getPlayerManager().isPlayerWatchingChunk((EntityPlayerMP) ep, c.xPosition, c.zPosition))
+									.forEach(ep -> DynamicDynamos.inst.network.sendTo(msg, (EntityPlayerMP) ep));
+
+							// Update the rate in the map
+							lastTickRate.put(tdb, tdb.getInfoEnergyPerTick());
 						}
-						lastTickRate.put(tdb, tdb.getInfoEnergyPerTick());
 					}
 				}
 			}
 		}
 	}
-	
+
 	@SubscribeEvent
 	public void onChunkWatch(ChunkWatchEvent.Watch e) {
 		for (TileEntity te : (Collection<TileEntity>)e.player.worldObj.getChunkFromChunkCoords(e.chunk.chunkXPos, e.chunk.chunkZPos).chunkTileEntityMap.values()) {
